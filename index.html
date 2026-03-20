@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>סקר עצים - v29.3</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 15px; background: #f0f2f5; direction: rtl; margin-bottom: 120px; }
+        .card { background: white; padding: 15px; border-radius: 12px; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .hidden { display: none; }
+        .row { display: flex; gap: 10px; margin-top: 10px; }
+        .row div { flex: 1; }
+        input, select, textarea { width: 100%; padding: 12px; margin: 5px 0; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+        button { width: 100%; padding: 15px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .add-btn { background: #007aff; color: white; }
+        .final-btn { background: #34c759; color: white; margin-top: 20px; }
+        .history-item { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
+        #uploadStatus { position: fixed; bottom: 20px; left: 20px; right: 20px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 30px; text-align: center; z-index: 100; }
+    </style>
+</head>
+<body>
+
+    <div id="setupStep" class="card">
+        <h3>הגדרת פרויקט חדש</h3>
+        <label>שם הפרויקט (תיקייה בדרייב):</label>
+        <input type="text" id="projectName" placeholder="הזינו שם פרויקט...">
+        <button class="add-btn" id="startBtn" onclick="startSurvey()">התחל סקר וצור תיקייה</button>
+    </div>
+
+    <div id="surveyStep" class="hidden">
+        <h3 id="projNameDisp" style="margin:0 0 10px 0; color:#007aff;"></h3>
+        
+        <div class="card">
+            <label>מספר עץ:</label>
+            <input type="number" id="treeNum" inputmode="numeric">
+            
+            <label>סוג העץ:</label>
+            <input type="text" id="species" list="speciesOptions" placeholder="הקלידי לחיפוש...">
+            <datalist id="speciesOptions">
+                <option value="אבוקדו אמריקני"><option value="אגוז המלך"><option value="אדר מצוי"><option value="אורן ירושלים"><option value="אורן הצנובר"><option value="אלון מצוי"><option value="אלון התבור"><option value="זית אירופי"><option value="חרוב מצוי"><option value="כליל החורש"><option value="צאלון נאה"><option value="ברוש מצוי">
+            </datalist>
+
+            <div class="row">
+                <div><label>גובה (מ')</label><input type="number" id="height" step="0.1" inputmode="decimal"></div>
+                <div><label>קוטר נוף</label><input type="number" id="crownWidth" step="0.1" inputmode="decimal"></div>
+            </div>
+
+            <div class="row">
+                <div><label>קוטר 1</label><input type="number" id="d1" inputmode="numeric"></div>
+                <div><label>קוטר 2</label><input type="number" id="d2" inputmode="numeric"></div>
+                <div><label>קוטר 3</label><input type="number" id="d3" inputmode="numeric"></div>
+            </div>
+
+            <label>מצב בריאותי (1-5):</label>
+            <select id="health"><option value="5">5 - מצוין</option><option value="4" selected>4 - טוב</option><option value="3">3 - בינוני</option><option value="2">2 - ירוד</option><option value="1">1 - מת/מסוכן</option></select>
+
+            <label>הערות:</label>
+            <textarea id="notes" rows="2"></textarea>
+
+            <label>צילום עץ (חובה):</label>
+            <input type="file" id="img1" accept="image/*" capture="camera">
+            
+            <label>צילומים נוספים:</label>
+            <input type="file" id="extraImg1" accept="image/*" capture="camera">
+            <input type="file" id="extraImg2" accept="image/*" capture="camera">
+
+            <button class="add-btn" onclick="saveTree()" style="margin-top:15px;">שמור עץ והמשך</button>
+        </div>
+
+        <div id="statusCount" style="text-align:center; font-weight:bold; margin:15px 0;">עצים שנסקרו: 0</div>
+        <div id="historyList" class="card"></div>
+        
+        <button id="finalBtn" class="final-btn" onclick="finishSurvey()">סיים סקר והפק אקסל</button>
+    </div>
+
+    <div id="uploadStatus" class="hidden">מעלה נתונים... <span id="queueCount">0</span> נותרו</div>
+
+    <div id="resultArea" class="card hidden" style="text-align:center;">
+        <h3 style="color:#34c759;">הסקר הועלה בהצלחה!</h3>
+        <p id="linkArea"></p>
+        <button class="add-btn" onclick="location.reload()">סקר חדש</button>
+    </div>
+
+    <script>
+        const GOOGLE_URL = 'https://script.google.com/macros/s/AKfycbwpAd1at_wnS22QQVnrTYC0B7Z0RXVoKe9l_YUiZ5OwFcMIdUsh7pTR_2byfk6QgQht/exec';
+        let db = []; 
+        let uploadQueue = []; 
+        let isUploading = false;
+        let currentProject = "";
+
+        async function startSurvey() {
+            currentProject = document.getElementById('projectName').value.trim();
+            if (!currentProject) return alert("נא להזין שם פרויקט");
+            
+            const btn = document.getElementById('startBtn');
+            btn.disabled = true; btn.innerText = "מתחבר לדרייב...";
+            
+            try {
+                fetch(GOOGLE_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ isInit: true, projectName: currentProject }) });
+                document.getElementById('setupStep').classList.add('hidden');
+                document.getElementById('surveyStep').classList.remove('hidden');
+                document.getElementById('projNameDisp').innerText = "פרויקט: " + currentProject;
+            } catch (e) { 
+                alert("שגיאה בחיבור"); 
+                btn.disabled = false; 
+            }
+        }
+
+        async function processImage(file) {
+            if (!file) return null;
+            return new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX_SIZE = 1600; 
+                        let w = img.width, h = img.height;
+                        if (w > h) { if (w > MAX_SIZE) { h *= MAX_SIZE / w; w = MAX_SIZE; } }
+                        else { if (h > MAX_SIZE) { w *= MAX_SIZE / h; h = MAX_SIZE; } }
+                        canvas.width = w; canvas.height = h;
+                        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                        resolve(canvas.toDataURL('image/jpeg', 0.8));
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function saveTree() {
+            const treeNum = document.getElementById('treeNum').value;
+            if (!treeNum) return alert("חובה מספר עץ");
+            if (!document.getElementById('img1').files[0]) return alert("חובה לצלם לפחות תמונה אחת");
+
+            const treeData = { 
+                projectName: currentProject, 
+                treeNum, 
+                species: document.getElementById('species').value, 
+                height: document.getElementById('height').value, 
+                crownWidth: document.getElementById('crownWidth').value, 
+                d1: document.getElementById('d1').value, 
+                d2: document.getElementById('d2').value, 
+                d3: document.getElementById('d3').value, 
+                health: document.getElementById('health').value, 
+                notes: document.getElementById('notes').value 
+            };
+
+            const uploadItem = { ...treeData };
+            document.getElementById('uploadStatus').classList.remove('hidden');
+            
+            uploadItem.img1 = await processImage(document.getElementById('img1').files[0]);
+            uploadItem.extraImages = [];
+            const e1 = await processImage(document.getElementById('extraImg1').files[0]); if(e1) uploadItem.extraImages.push(e1);
+            const e2 = await processImage(document.getElementById('extraImg2').files[0]); if(e2) uploadItem.extraImages.push(e2);
+
+            uploadQueue.push(uploadItem);
+            db.push(treeData); 
+            
+            updateUI();
+            resetForm();
+            processQueue();
+        }
+
+        async function processQueue() {
+            if (isUploading) return;
+            isUploading = true;
+            while (uploadQueue.length > 0) {
+                document.getElementById('queueCount').innerText = uploadQueue.length;
+                try {
+                    await fetch(GOOGLE_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(uploadQueue[0]) });
+                    uploadQueue.shift();
+                } catch (e) { 
+                    await new Promise(r => setTimeout(r, 2000)); 
+                }
+                document.getElementById('queueCount').innerText = uploadQueue.length;
+            }
+            document.getElementById('uploadStatus').classList.add('hidden');
+            isUploading = false;
+        }
+
+        function updateUI() {
+            document.getElementById('statusCount').innerText = "עצים שנסקרו: " + db.length;
+            document.getElementById('historyList').innerHTML = db.slice().reverse().map(t => `
+                <div class="history-item">
+                    <span><b>#${t.treeNum}</b> - ${t.species}</span>
+                    <span style="color: #34c759;">✓</span>
+                </div>`).join('');
+        }
+
+        function resetForm() {
+            ["treeNum","species","height","crownWidth","d1","d2","d3","notes","img1","extraImg1","extraImg2"].forEach(id => document.getElementById(id).value = "");
+            document.getElementById('health').value = "4";
+            // קידום אוטומטי של מספר העץ
+            document.getElementById('treeNum').value = db.length + 1;
+        }
+
+        async function finishSurvey() {
+            if (uploadQueue.length > 0) return alert("המתיני לסיום העלאת התמונות (" + uploadQueue.length + " נותרו)...");
+            
+            const btn = document.getElementById('finalBtn');
+            btn.disabled = true; btn.innerText = "סוגר סקר...";
+
+            fetch(GOOGLE_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ isFinal: true, projectName: currentProject, db: db }) });
+            
+            setTimeout(() => {
+                document.getElementById('surveyStep').classList.add('hidden');
+                document.getElementById('linkArea').innerText = "הקובץ נוצר בתיקייה בדרייב שלך תחת הפרויקט: " + currentProject;
+                document.getElementById('resultArea').classList.remove('hidden');
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
